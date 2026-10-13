@@ -53,6 +53,8 @@ If no PDB files are found, the solver uses a simple admissible heuristic based o
 ```bash
 # Build
 make
+# Windows without make:
+# g++ -std=c++17 -O2 -o rubiks_solver cube.cpp pdb.cpp solver.cpp main.cpp
 
 # Run the self-tests (11 tests)
 make test            # or: ./rubiks_solver test
@@ -60,36 +62,37 @@ make test            # or: ./rubiks_solver test
 # Generate the pattern databases (one-time, takes several minutes, ~170 MB of RAM)
 ./rubiks_solver genpdb
 
-# Solve scrambles (default mode)
+# Run the built-in demo scrambles (1 to 13 moves)
 ./rubiks_solver solve
+
+# Enter your own scramble
+./rubiks_solver interactive
+
+# On Windows, use .\rubiks_solver.exe instead of ./rubiks_solver
 ```
 
-In `solve` mode the program first runs demo scrambles of 1 to 12 moves (60-second time limit each). For every scramble it prints the initial heuristic value, the nodes expanded at each IDA\* threshold, the optimal solution, and a verification result. Example output for a 12-move scramble:
+In `solve` mode the program first runs demo scrambles of 1 to 13 moves (60-second time limit each). For every scramble it prints the initial heuristic value, the nodes expanded at each IDA\* threshold, the optimal solution, and a verification result. Example output for a 13-move scramble:
 
 ```
 Pattern databases loaded successfully.
 Time limit: 60s per scramble
 
---- 12-move ---
-Scramble: R U2 F' D L2 B R' U D2 F L' B2 (12 moves)
-  Initial h = 8
-  Threshold 8: 18 nodes, 0s
-  Threshold 9: 402 nodes, 0s
-  Threshold 10: 4395 nodes, 0.001996s
-  Threshold 11: 55737 nodes, 0.025019s
-  Threshold 12: 688655 nodes, 0.295627s
-SOLVED! Depth: 12  Nodes: 688655  Time: 0.328602s
-Solution: B2 L F' D2 U' R B' L2 D' F U2 R'
+--- 13-move ---
+Scramble: F R' U2 B L D' R2 U' F2 L' D B' R (13 moves)
+  Initial h = 7
+  Threshold 7: 18 nodes, 0.000981s
+  Threshold 8: 81 nodes, 0s
+  Threshold 9: 579 nodes, 0s
+  Threshold 10: 5646 nodes, 0.002002s
+  Threshold 11: 70647 nodes, 0.035003s
+  Threshold 12: 881163 nodes, 0.349162s
+  Threshold 13: 5352701 nodes, 2.0263s
+SOLVED! Depth: 13  Nodes: 5352701  Time: 2.41934s
+Solution: R' B D' L F2 U R2 D L' B' U2 R F'
 Verification: CORRECT
 ```
 
-You can then enter your own scramble in standard notation, for example:
-
-```
-R U R' U' F2 D L' B
-```
-
-Moves are `U D L R F B`, with `'` for counter-clockwise and `2` for a half-turn.
+To solve your own scramble, run `./rubiks_solver interactive` and enter it in standard move notation: `U D L R F B`, with `'` for counter-clockwise and `2` for a half-turn, for example `R U2 F' D`. The built-in demo scrambles are defined in `main.cpp`.
 
 To remove build files and the generated databases: `make clean`.
 
@@ -110,11 +113,12 @@ Results from the built-in demo scrambles (`./rubiks_solver solve`, with all thre
 | 8 moves | 8 | 88 | 0.003 s |
 | 10 moves | 10 | 2,497 | 0.005 s |
 | 12 moves | 12 | 688,655 | 0.33 s |
+| 13 moves | 13 | 5,352,701 | 2.42 s |
 
 **What the numbers show**
 
 - For scrambles of up to 6 moves, the initial heuristic equals the optimal solution length, so the search expands only a handful of nodes.
-- Beyond that, each extra level of depth multiplies the node count by roughly 11-13× (4,395 → 55,737 → 688,655 nodes across thresholds 10, 11 and 12 above).
+- Beyond that, each extra level of depth multiplies the node count by roughly 6-13× (for example 5,646 → 70,647 → 881,163 → 5,352,701 nodes across thresholds 10 to 13 in the 13-move run above).
 - These are fixed demo scrambles, not averages over random positions. Random scrambles of the same length can take longer.
 
 ---
@@ -138,7 +142,7 @@ Results from the built-in demo scrambles (`./rubiks_solver solve`, with all thre
 | `cube.h` / `cube.cpp` | Cube state, the 18 moves, move tables, ranking and unranking functions |
 | `pdb.h` / `pdb.cpp` | Pattern databases: generation by backward BFS, lookup, save and load; the simple fallback heuristic |
 | `solver.h` / `solver.cpp` | IDA\* solver and move pruning |
-| `main.cpp` | Command-line entry point (`test`, `genpdb`, `solve`) and self-tests |
+| `main.cpp` | Command-line entry point (`test`, `genpdb`, `solve`, `interactive`) and self-tests |
 | `Makefile` | Build, test and clean targets |
 | `explainer.md` | Detailed explanation of the design |
 
@@ -147,7 +151,7 @@ Results from the built-in demo scrambles (`./rubiks_solver solve`, with all thre
 ## Limitations
 
 - Optimality is in the **half-turn metric** (any face turn counts as one move), not the quarter-turn metric.
-- Optimal search is exponential in scramble depth. The demo covers scrambles of up to 12 moves, and very deep scrambles (near the 20-move "God's number") are out of reach for this implementation.
+- Optimal search is exponential in scramble depth. The demo covers scrambles of up to 13 moves, and very deep scrambles (near the 20-move "God's number") are out of reach for this implementation.
 - The pattern databases must be generated once before the solver can handle anything beyond shallow scrambles.
 
 ## Reference

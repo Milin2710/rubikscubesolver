@@ -185,6 +185,7 @@ static DemoScramble demos[] = {
     {"8-move",   "R U F D R' U' F' D'",     8},
     {"10-move",  "R U F L B U R2 D F' L'", 10},
     {"12-move",  "R U2 F' D L2 B R' U D2 F L' B2", 12},
+    {"13-move",  "F R' U2 B L D' R2 U' F2 L' D B' R", 13},
 };
 
 static const int N_DEMOS = sizeof(demos) / sizeof(demos[0]);
