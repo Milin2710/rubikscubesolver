@@ -1,2 +1,5 @@
 .env
 .vscode
+rubiks_solver
+*.pdb
+*.o

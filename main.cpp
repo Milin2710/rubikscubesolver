@@ -5,244 +5,316 @@
 #include <fstream>
 #include <string>
 #include <cassert>
+#include <chrono>
+#include <cstdlib>
 
-// ============================================================
-//  Self-tests for cube mechanics
-// ============================================================
-static void run_tests() {
-    std::cout << "=== Running self-tests ===\n";
+// ========== Self-Tests ==========
+
+static int run_tests() {
+    std::cout << "=== Running Self-Tests ===" << std::endl;
+    int pass = 0, total = 0;
 
     // Test 1: Solved state is solved
     {
-        CubeState s = CubeState::solved();
+        total++;
+        CubeState s; s.set_solved();
         assert(s.is_solved());
-        std::cout << "[PASS] Solved state identity\n";
+        std::cout << "  [PASS] Test 1: Solved state is solved" << std::endl;
+        pass++;
     }
 
-    // Test 2: R R' = identity
+    // Test 2: R R' = Identity (inverse for all faces)
     {
-        CubeState s = CubeState::solved();
-        s.apply_move(R1);
-        assert(!s.is_solved());
-        s.apply_move(R3); // R' = R inverse
-        assert(s.is_solved());
-        std::cout << "[PASS] R R' = identity\n";
-    }
-
-    // Test 3: R4 = identity
-    {
-        CubeState s = CubeState::solved();
-        for (int i = 0; i < 4; i++) s.apply_move(R1);
-        assert(s.is_solved());
-        std::cout << "[PASS] R^4 = identity\n";
-    }
-
-    // Test 4: U4 = identity
-    {
-        CubeState s = CubeState::solved();
-        for (int i = 0; i < 4; i++) s.apply_move(U1);
-        assert(s.is_solved());
-        std::cout << "[PASS] U^4 = identity\n";
-    }
-
-    // Test 5: All face^4 = identity
-    {
-        const Move cw_moves[] = {U1, D1, R1, L1, F1, B1};
-        for (Move m : cw_moves) {
-            CubeState s = CubeState::solved();
-            for (int i = 0; i < 4; i++) s.apply_move(m);
-            assert(s.is_solved());
+        total++;
+        bool ok = true;
+        CubeState solved; solved.set_solved();
+        for (int face = 0; face < 6; face++) {
+            Move cw  = static_cast<Move>(face * 3);
+            Move ccw = static_cast<Move>(face * 3 + 2);
+            CubeState s = solved.apply(cw).apply(ccw);
+            if (!(s == solved)) { ok = false; break; }
         }
-        std::cout << "[PASS] All face^4 = identity\n";
+        assert(ok);
+        std::cout << "  [PASS] Test 2: X X' = Identity for all faces" << std::endl;
+        pass++;
     }
 
-    // Test 6: Half turn squared = identity
+    // Test 3: R^4 = Identity (order 4 for all CW moves)
     {
-        const Move h_moves[] = {U2, D2, R2, L2, F2, B2};
-        for (Move m : h_moves) {
-            CubeState s = CubeState::solved();
-            s.apply_move(m);
-            s.apply_move(m);
-            assert(s.is_solved());
+        total++;
+        bool ok = true;
+        CubeState solved; solved.set_solved();
+        for (int face = 0; face < 6; face++) {
+            Move cw = static_cast<Move>(face * 3);
+            CubeState s = solved;
+            for (int i = 0; i < 4; i++) s = s.apply(cw);
+            if (!(s == solved)) { ok = false; break; }
         }
-        std::cout << "[PASS] All half-turn^2 = identity\n";
+        assert(ok);
+        std::cout << "  [PASS] Test 3: X^4 = Identity for all CW moves" << std::endl;
+        pass++;
     }
 
-    // Test 7: Superflip (known 20-move position) doesn't crash
+    // Test 4: X2^2 = Identity (order 2 for all half turns)
     {
-        CubeState s = CubeState::solved();
-        auto moves = parse_moves("U R2 F B R B2 R U2 L B2 R U' D' R2 F R' L B2 U2 F2");
-        s.apply_moves(moves);
-        assert(!s.is_solved());
-        std::cout << "[PASS] Superflip applied (20 moves)\n";
+        total++;
+        bool ok = true;
+        CubeState solved; solved.set_solved();
+        for (int face = 0; face < 6; face++) {
+            Move half = static_cast<Move>(face * 3 + 1);
+            CubeState s = solved.apply(half).apply(half);
+            if (!(s == solved)) { ok = false; break; }
+        }
+        assert(ok);
+        std::cout << "  [PASS] Test 4: X2^2 = Identity for all half turns" << std::endl;
+        pass++;
     }
 
-    // Test 8: Corner index round-trip
+    // Test 5: Corner index of solved state = 0
     {
-        CubeState s = CubeState::solved();
-        s.apply_move(R1);
-        s.apply_move(U1);
-        uint32_t idx = corner_index(s);
-        CubeState s2;
-        corner_unrank(idx, s2);
-        assert(corner_index(s2) == idx);
-        std::cout << "[PASS] Corner index round-trip\n";
-    }
-
-    // Test 9: Solved state has corner index 0
-    {
-        CubeState s = CubeState::solved();
+        total++;
+        CubeState s; s.set_solved();
         assert(corner_index(s) == 0);
-        std::cout << "[PASS] Solved corner index = 0\n";
+        std::cout << "  [PASS] Test 5: Corner index of solved = 0" << std::endl;
+        pass++;
     }
 
-    // Test 10: Edge index consistency
+    // Test 6: Corner index round-trip (encode -> decode -> re-encode)
     {
-        CubeState s = CubeState::solved();
-        // Group 0 (cubies 0-5 at positions 0-5): rank should be 0
-        assert(edge_index(s, 0) == 0);
-        // Group 1 (cubies 6-11 at positions 6-11): nonzero but consistent
-        uint32_t idx1 = edge_index(s, 1);
-        assert(idx1 < N_EDGE_STATES);
-        std::cout << "[PASS] Edge indices valid (group0=0, group1=" << idx1 << ")\n";
+        total++;
+        CubeState s; s.set_solved();
+        s = s.apply(R1).apply(U1).apply(F1);
+        uint32_t idx = corner_index(s);
+        CubeState s2 = corner_unrank(idx);
+        uint32_t idx2 = corner_index(s2);
+        assert(idx == idx2);
+        std::cout << "  [PASS] Test 6: Corner index round-trip" << std::endl;
+        pass++;
     }
 
-    // Test 11: Parse moves
+    // Test 7: Edge index validity (in range)
     {
-        auto moves = parse_moves("R U' F2");
-        assert(moves.size() == 3);
+        total++;
+        CubeState s; s.set_solved();
+        s = s.apply(R1).apply(U1);
+        uint32_t e0 = edge_index(s, 0);
+        uint32_t e1 = edge_index(s, 1);
+        assert(e0 < N_EDGE_STATES);
+        assert(e1 < N_EDGE_STATES);
+        std::cout << "  [PASS] Test 7: Edge indices in valid range" << std::endl;
+        pass++;
+    }
+
+    // Test 8: Edge index round-trip
+    {
+        total++;
+        CubeState s; s.set_solved();
+        s = s.apply(F1).apply(R1).apply(U1);
+        uint32_t idx = edge_index(s, 0);
+        // Verify it's consistent (apply same scramble to solved, get same index)
+        CubeState s2; s2.set_solved();
+        s2 = s2.apply(F1).apply(R1).apply(U1);
+        assert(edge_index(s2, 0) == idx);
+        std::cout << "  [PASS] Test 8: Edge index consistency" << std::endl;
+        pass++;
+    }
+
+    // Test 9: In-place apply + undo = identity
+    {
+        total++;
+        CubeState orig; orig.set_solved();
+        orig = orig.apply(R1).apply(U1).apply(F1);  // some scrambled state
+        CubeState s = orig;
+        for (int m = 0; m < N_MOVES; m++) {
+            Move mv = static_cast<Move>(m);
+            s.apply_inplace(mv);
+            s.undo_inplace(mv);
+            assert(s == orig);
+        }
+        std::cout << "  [PASS] Test 9: In-place apply + undo = identity for all 18 moves" << std::endl;
+        pass++;
+    }
+
+    // Test 10: Move parsing
+    {
+        total++;
+        auto moves = parse_scramble("R U2 F' L D B2");
+        assert(moves.size() == 6);
         assert(moves[0] == R1);
-        assert(moves[1] == U3);
-        assert(moves[2] == F2);
-        std::cout << "[PASS] Move parsing\n";
+        assert(moves[1] == U2);
+        assert(moves[2] == F3);
+        assert(moves[3] == L1);
+        assert(moves[4] == D1);
+        assert(moves[5] == B2);
+        std::cout << "  [PASS] Test 10: Move parsing" << std::endl;
+        pass++;
     }
 
-    std::cout << "=== All tests passed! ===\n\n";
+    // Test 11: SimpleHeuristic is admissible (h=0 for solved)
+    {
+        total++;
+        CubeState s; s.set_solved();
+        SimpleHeuristic sh;
+        assert(sh(s) == 0);
+        // Also check it's > 0 for non-trivial scramble
+        CubeState s2 = s.apply(R1).apply(U1).apply(F1);
+        assert(sh(s2) > 0);
+        std::cout << "  [PASS] Test 11: SimpleHeuristic basic properties" << std::endl;
+        pass++;
+    }
+
+    std::cout << "=== " << pass << " / " << total << " tests passed ===" << std::endl;
+    return (pass == total) ? 0 : 1;
 }
 
-// ============================================================
-//  Solve a scramble and print results
-// ============================================================
-static void solve_scramble(IDASolver& solver, const std::string& scramble_str) {
-    auto moves = parse_moves(scramble_str);
-    if (moves.empty()) {
-        std::cout << "No valid moves. Use notation: R U' F2 D B2 L\n";
-        return;
-    }
+// ========== Demo Scrambles ==========
 
-    std::cout << "Scramble (" << moves.size() << " moves): ";
-    for (Move m : moves) std::cout << move_name(m) << " ";
-    std::cout << "\n";
+struct DemoScramble {
+    const char* name;
+    const char* scramble;
+    int expected_depth;  // -1 = unknown
+};
 
-    CubeState cube = CubeState::solved();
-    cube.apply_moves(moves);
+static DemoScramble demos[] = {
+    {"1-move",   "R",                       1},
+    {"2-move",   "R U",                     2},
+    {"3-move",   "R U F",                   3},
+    {"4-move",   "R U F D",                 4},
+    {"5-move",   "R U F D L",               5},
+    {"6-move",   "R U F D L B",             6},
+    {"8-move",   "R U F D R' U' F' D'",     8},
+    {"10-move",  "R U F L B U R2 D F' L'", 10},
+    {"12-move",  "R U2 F' D L2 B R' U D2 F L' B2", 12},
+};
 
-    std::cout << "Solving...\n";
-    SolverResult result = solver.solve(cube);
+static const int N_DEMOS = sizeof(demos) / sizeof(demos[0]);
+
+// ========== Solve a single scramble ==========
+
+template<typename HeuristicFn>
+static void solve_scramble(const std::string& name, const std::string& scramble_str,
+                           HeuristicFn& heuristic, double time_limit) {
+    auto moves = parse_scramble(scramble_str);
+    CubeState s;
+    s.set_solved();
+    for (auto m : moves) s = s.apply(m);
+
+    std::cout << "\n--- " << name << " ---" << std::endl;
+    std::cout << "Scramble: " << scramble_str << " (" << moves.size() << " moves)" << std::endl;
+
+    IDASolver<HeuristicFn> solver(heuristic, 0, time_limit);
+    SolverResult result = solver.solve(s);
 
     if (result.found) {
-        std::cout << "\nSolution (" << result.depth << " moves): ";
-        for (Move m : result.solution) std::cout << move_name(m) << " ";
-        std::cout << "\n";
-        std::cout << "Nodes: " << result.nodes_expanded
-                  << ", Time: " << result.time_seconds << "s\n";
+        std::cout << "SOLVED! Depth: " << result.depth
+                  << "  Nodes: " << result.nodes_expanded
+                  << "  Time: " << result.time_seconds << "s" << std::endl;
+        std::cout << "Solution: " << solution_to_string(result.solution) << std::endl;
 
-        // Verify
-        CubeState verify = cube;
-        verify.apply_moves(result.solution);
-        std::cout << (verify.is_solved() ? "Solution VERIFIED.\n"
-                                         : "WARNING: Verification FAILED!\n");
+        // Verify solution
+        CubeState verify = s;
+        for (auto m : result.solution) verify = verify.apply(m);
+        if (verify.is_solved()) {
+            std::cout << "Verification: CORRECT" << std::endl;
+        } else {
+            std::cout << "Verification: FAILED!" << std::endl;
+        }
+    } else if (result.timed_out) {
+        std::cout << "TIMED OUT after " << result.time_seconds << "s, "
+                  << result.nodes_expanded << " nodes" << std::endl;
     } else {
-        std::cout << "No solution found (node limit or too deep).\n";
+        std::cout << "No solution found." << std::endl;
     }
 }
 
-// ============================================================
-//  Main
-// ============================================================
+// ========== Main ==========
+
+static void print_usage() {
+    std::cout << "Usage:" << std::endl;
+    std::cout << "  rubiks_solver test            Run self-tests" << std::endl;
+    std::cout << "  rubiks_solver genpdb          Generate pattern databases" << std::endl;
+    std::cout << "  rubiks_solver solve [limit]   Solve demo scrambles (limit=seconds, default 60)" << std::endl;
+    std::cout << "  rubiks_solver interactive     Interactive scramble input" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
-    std::cout << "============================================\n";
-    std::cout << "  Rubik's Cube Solver — Korf's IDA*\n";
-    std::cout << "============================================\n\n";
+    init_move_tables();
 
-    run_tests();
-
-    std::string mode = (argc > 1) ? argv[1] : "solve";
-
-    if (mode == "test") return 0;
-
-    if (mode == "genpdb") {
-        std::cout << "Generating pattern databases...\n";
-        std::cout << "(This takes several minutes and ~170MB RAM)\n";
-        std::cout << "Run on your own machine, not in a sandbox.\n\n";
-        Heuristic h;
-        h.init(".");
-        std::cout << "\nAll PDBs generated and saved to .pdb files.\n";
+    if (argc < 2) {
+        print_usage();
         return 0;
     }
 
-    if (mode == "solve") {
-        // Try loading PDBs; fall back to simple heuristic
-        HeuristicFn hfn;
-        Heuristic pdb_heuristic;
-        SimpleHeuristic simple_heuristic;
+    std::string cmd = argv[1];
 
-        bool use_pdb = false;
-        // Check if PDB files exist
-        {
-            std::ifstream f("corner.pdb");
-            if (f.good()) {
-                std::cout << "PDB files found, loading...\n";
-                pdb_heuristic.init(".");
-                use_pdb = true;
-                hfn = [&](const CubeState& s) { return pdb_heuristic(s); };
+    if (cmd == "test") {
+        return run_tests();
+    }
+
+    if (cmd == "genpdb") {
+        Heuristic h;
+        h.generate_all();
+        h.save_to_disk(".");
+        std::cout << "Pattern databases saved to disk." << std::endl;
+        return 0;
+    }
+
+    if (cmd == "solve" || cmd == "interactive") {
+        // Time limit: default 60 seconds per scramble
+        double time_limit = 60.0;
+        if (argc >= 3) {
+            time_limit = std::atof(argv[2]);
+            if (time_limit <= 0) time_limit = 60.0;
+        }
+
+        // Try loading PDBs
+        Heuristic pdb_h;
+        bool have_pdbs = pdb_h.load_from_disk(".");
+
+        if (have_pdbs) {
+            std::cout << "Pattern databases loaded successfully." << std::endl;
+            std::cout << "Time limit: " << time_limit << "s per scramble" << std::endl;
+
+            if (cmd == "solve") {
+                // Run demo scrambles
+                for (int i = 0; i < N_DEMOS; i++) {
+                    solve_scramble(demos[i].name, demos[i].scramble, pdb_h, time_limit);
+                }
+            } else {
+                // Interactive mode
+                std::cout << "\nEnter scramble (e.g., R U F' L2 B D'): " << std::endl;
+                std::string line;
+                while (std::getline(std::cin, line)) {
+                    if (line.empty() || line == "quit" || line == "exit") break;
+                    solve_scramble("User scramble", line, pdb_h, time_limit);
+                    std::cout << "\nEnter scramble (or 'quit'): " << std::endl;
+                }
+            }
+        } else {
+            std::cout << "PDB files not found. Using SimpleHeuristic (weaker, works for ~7 moves)." << std::endl;
+            std::cout << "Run 'rubiks_solver genpdb' first for full-strength solving." << std::endl;
+            std::cout << "Time limit: " << time_limit << "s per scramble" << std::endl;
+            SimpleHeuristic simple_h;
+
+            if (cmd == "solve") {
+                // Only run shorter demos with SimpleHeuristic
+                for (int i = 0; i < std::min(7, N_DEMOS); i++) {
+                    solve_scramble(demos[i].name, demos[i].scramble, simple_h, time_limit);
+                }
+            } else {
+                std::cout << "\nEnter scramble (e.g., R U F' L2 B D'): " << std::endl;
+                std::string line;
+                while (std::getline(std::cin, line)) {
+                    if (line.empty() || line == "quit" || line == "exit") break;
+                    solve_scramble("User scramble", line, simple_h, time_limit);
+                    std::cout << "\nEnter scramble (or 'quit'): " << std::endl;
+                }
             }
         }
 
-        if (!use_pdb) {
-            std::cout << "No PDB files found. Using simple heuristic.\n";
-            std::cout << "(Works for scrambles up to ~7-8 moves. For harder ones,\n";
-            std::cout << " generate PDBs with: ./rubiks_solver genpdb)\n\n";
-            hfn = [&](const CubeState& s) { return simple_heuristic(s); };
-        }
-
-        IDASolver solver(hfn);
-        if (!use_pdb) solver.set_node_limit(50'000'000); // safety limit
-
-        // Demo solves
-        std::cout << "\n--- Demo Solves ---\n\n";
-
-        std::cout << "[1] Scramble: R\n";
-        solve_scramble(solver, "R");
-
-        std::cout << "\n[2] Scramble: R U\n";
-        solve_scramble(solver, "R U");
-
-        std::cout << "\n[3] Scramble: R U F\n";
-        solve_scramble(solver, "R U F");
-
-        std::cout << "\n[4] Scramble: R U R' U'\n";
-        solve_scramble(solver, "R U R' U'");
-
-        std::cout << "\n[5] Scramble: F R U R' U' F'\n";
-        solve_scramble(solver, "F R U R' U' F'");
-
-        std::cout << "\n[6] Scramble: R U2 L' B D'\n";
-        solve_scramble(solver, "R U2 L' B D'");
-
-        // Interactive
-        std::cout << "\n--- Interactive Mode (type 'quit' to exit) ---\n";
-        std::string line;
-        while (true) {
-            std::cout << "\nScramble> ";
-            if (!std::getline(std::cin, line)) break;
-            if (line == "quit" || line == "exit") break;
-            if (line.empty()) continue;
-            solve_scramble(solver, line);
-        }
         return 0;
     }
 
-    std::cout << "Usage: " << argv[0] << " [test|genpdb|solve]\n";
-    return 0;
+    print_usage();
+    return 1;
 }

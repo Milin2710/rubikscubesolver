@@ -1,82 +1,73 @@
 #pragma once
 #include "cube.h"
-#include <string>
 #include <vector>
+#include <string>
 #include <cstdint>
+#include <functional>
 
-// ============================================================
-//  Pattern Database
-//
-//  Stores the minimum number of moves to solve a sub-problem
-//  (corners only, or a group of 6 edges) from any configuration.
-//
-//  Built via reverse BFS from the solved state.
-//  Values are stored as nibbles (4 bits each, max 15) to save memory.
-// ============================================================
-
+// --- Pattern Database with nibble-packed storage ---
 class PatternDB {
 public:
-    // Type of PDB
-    enum Type { CORNERS, EDGE_GROUP_0, EDGE_GROUP_1 };
+    enum Type { CORNER, EDGE0, EDGE1 };
 
-    PatternDB() = default;
+    PatternDB(Type type);
 
-    // Generate by BFS (takes a few minutes for corners, ~1 min for edges)
-    void generate(Type type);
+    // Generate via BFS from solved state
+    void generate();
 
-    // Look up the heuristic value for a cube state
+    // Lookup depth for a cube state
     uint8_t lookup(const CubeState& s) const;
 
-    // Save / load to disk
+    // Save/load binary files
     bool save(const std::string& filename) const;
     bool load(const std::string& filename);
 
-    // Info
-    Type   get_type()  const { return type_; }
-    size_t get_size()  const { return size_; }
-    size_t get_bytes() const { return data_.size(); }
-    bool   is_ready()  const { return !data_.empty(); }
+    uint32_t size() const { return size_; }
+    bool is_generated() const { return generated_; }
 
 private:
     Type type_;
-    uint32_t size_ = 0;            // number of entries
-    std::vector<uint8_t> data_;    // nibble-packed: 2 entries per byte
+    uint32_t size_;
+    std::vector<uint8_t> data_;  // nibble-packed: 2 entries per byte
+    bool generated_ = false;
 
     void set_val(uint32_t idx, uint8_t val);
     uint8_t get_val(uint32_t idx) const;
 
-    // Index a state for this PDB type
+    // Index function for this PDB type
     uint32_t index(const CubeState& s) const;
+
+    // Unrank function for BFS generation
+    CubeState unrank(uint32_t idx) const;
 };
 
-// ============================================================
-//  Combined Heuristic: max of all loaded PDBs
-// ============================================================
-
+// --- Combined PDB heuristic: max of all 3 PDBs ---
 class Heuristic {
 public:
-    // Load or generate all 3 PDBs. directory = where to cache files.
-    void init(const std::string& directory = ".");
+    Heuristic();
 
-    // h(state) = max of all PDB lookups (admissible)
+    // Try to load PDBs from disk; returns true if all loaded
+    bool load_from_disk(const std::string& dir = ".");
+
+    // Generate all PDBs (slow, one-time)
+    void generate_all();
+
+    // Save all PDBs to disk
+    void save_to_disk(const std::string& dir = ".") const;
+
+    // Heuristic value: max of 3 PDB lookups
     uint8_t operator()(const CubeState& s) const;
 
-    bool is_ready() const { return ready_; }
+    bool ready() const { return ready_; }
 
 private:
-    bool ready_ = false;
     PatternDB corner_pdb_;
     PatternDB edge0_pdb_;
     PatternDB edge1_pdb_;
+    bool ready_ = false;
 };
 
-// ============================================================
-//  Simple Heuristic (no PDBs needed, weaker but instant)
-//
-//  Uses corner + edge misplacement and orientation counts.
-//  Admissible but weak — good for testing IDA* on short scrambles.
-// ============================================================
-
+// --- Simple admissible heuristic (no precomputation, weaker) ---
 class SimpleHeuristic {
 public:
     uint8_t operator()(const CubeState& s) const;

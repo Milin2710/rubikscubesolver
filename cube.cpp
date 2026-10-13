@@ -1,239 +1,214 @@
 #include "cube.h"
-#include <algorithm>
-#include <cassert>
-#include <iostream>
+#include <cstring>
 #include <sstream>
+#include <algorithm>
+#include <stdexcept>
 
-// ============================================================
-//  Solved State
-// ============================================================
-CubeState CubeState::solved() {
-    CubeState s;
-    for (int i = 0; i < N_CORNERS; i++) { s.cp[i] = i; s.co[i] = 0; }
-    for (int i = 0; i < N_EDGES;   i++) { s.ep[i] = i; s.eo[i] = 0; }
-    return s;
+// ========== Cube State ==========
+
+void CubeState::set_solved() {
+    for (int i = 0; i < N_CORNERS; i++) { cp[i] = i; co[i] = 0; }
+    for (int i = 0; i < N_EDGES;   i++) { ep[i] = i; eo[i] = 0; }
 }
 
 bool CubeState::is_solved() const {
-    return *this == CubeState::solved();
+    for (int i = 0; i < N_CORNERS; i++)
+        if (cp[i] != i || co[i] != 0) return false;
+    for (int i = 0; i < N_EDGES; i++)
+        if (ep[i] != i || eo[i] != 0) return false;
+    return true;
 }
 
-// ============================================================
-//  Base Move Tables (6 clockwise face turns)
-//
-//  Convention: cp[i] = j means "position i receives the cubie
-//  that was at position j". co[i] = twist applied to that cubie.
-//  Same for edges.
-// ============================================================
+bool CubeState::operator==(const CubeState& o) const {
+    return memcmp(cp, o.cp, N_CORNERS) == 0 &&
+           memcmp(co, o.co, N_CORNERS) == 0 &&
+           memcmp(ep, o.ep, N_EDGES) == 0 &&
+           memcmp(eo, o.eo, N_EDGES) == 0;
+}
 
-// Helper: build a move table from a 4-cycle
-static MoveTable make_identity() {
+// Apply a move — returns NEW state
+CubeState CubeState::apply(Move m) const {
+    const MoveTable& t = move_tables[m];
+    CubeState ns;
+    for (int i = 0; i < N_CORNERS; i++) {
+        ns.cp[i] = cp[t.cp[i]];
+        ns.co[i] = (co[t.cp[i]] + t.co[i]) % 3;
+    }
+    for (int i = 0; i < N_EDGES; i++) {
+        ns.ep[i] = ep[t.ep[i]];
+        ns.eo[i] = (eo[t.ep[i]] + t.eo[i]) % 2;
+    }
+    return ns;
+}
+
+// Apply move IN-PLACE — modifies this state directly (avoids allocation)
+void CubeState::apply_inplace(Move m) {
+    const MoveTable& t = move_tables[m];
+    // We need temps because source and dest overlap
+    uint8_t tcp[N_CORNERS], tco[N_CORNERS];
+    for (int i = 0; i < N_CORNERS; i++) {
+        tcp[i] = cp[t.cp[i]];
+        tco[i] = (co[t.cp[i]] + t.co[i]) % 3;
+    }
+    memcpy(cp, tcp, N_CORNERS);
+    memcpy(co, tco, N_CORNERS);
+
+    uint8_t tep[N_EDGES], teo[N_EDGES];
+    for (int i = 0; i < N_EDGES; i++) {
+        tep[i] = ep[t.ep[i]];
+        teo[i] = (eo[t.ep[i]] + t.eo[i]) % 2;
+    }
+    memcpy(ep, tep, N_EDGES);
+    memcpy(eo, teo, N_EDGES);
+}
+
+// Undo a move — apply the inverse move in-place
+void CubeState::undo_inplace(Move m) {
+    // Inverse of CW = CCW, inverse of half = half, inverse of CCW = CW
+    int face = move_face(m);
+    int turn = move_turn(m);
+    int inv_turn;
+    if (turn == 0)      inv_turn = 2;  // CW -> CCW
+    else if (turn == 2) inv_turn = 0;  // CCW -> CW
+    else                inv_turn = 1;  // half -> half
+    apply_inplace(static_cast<Move>(face * 3 + inv_turn));
+}
+
+// ========== Move Table Construction ==========
+
+MoveTable move_tables[N_MOVES];
+
+// Helper: make identity move table
+static MoveTable identity_table() {
     MoveTable t;
     for (int i = 0; i < N_CORNERS; i++) { t.cp[i] = i; t.co[i] = 0; }
     for (int i = 0; i < N_EDGES;   i++) { t.ep[i] = i; t.eo[i] = 0; }
     return t;
 }
 
-// The 6 base CW move tables
-static MoveTable base_moves[6];
-// All 18 move tables (CW, half, CCW for each face)
-static MoveTable all_moves[18];
-static bool tables_initialized = false;
-
-static void init_base_moves() {
-    // Each base move defined by corner 4-cycle, corner ori deltas,
-    // edge 4-cycle, and edge ori deltas.
-    //
-    // cycle[4] = {a,b,c,d} means a←b←c←d←a (position a receives from b, etc.)
-
-    struct FaceDef {
-        int c_cycle[4];
-        int c_twist[4]; // orientation delta for each position in cycle
-        int e_cycle[4];
-        int e_flip[4];  // flip delta for each position in cycle
-    };
-
-    //                    Corner cycle      Corner twist       Edge cycle        Edge flip
-    FaceDef defs[6] = {
-      /* U */ { {0,1,2,3},  {0,0,0,0},     {0,1,2,3},       {0,0,0,0} },
-      /* D */ { {4,7,6,5},  {0,0,0,0},     {4,7,6,5},       {0,0,0,0} },
-      /* R */ { {0,3,7,4},  {2,1,2,1},     {0,11,4,8},      {0,0,0,0} },
-      /* L */ { {1,5,6,2},  {1,2,1,2},     {2,9,6,10},      {0,0,0,0} },
-      /* F */ { {0,4,5,1},  {1,2,1,2},     {1,8,5,9},       {1,1,1,1} },
-      /* B */ { {3,2,6,7},  {1,2,1,2},     {3,10,7,11},     {1,1,1,1} },
-    };
-
-    for (int f = 0; f < 6; f++) {
-        base_moves[f] = make_identity();
-        auto& t = base_moves[f];
-        auto& d = defs[f];
-
-        // Apply corner 4-cycle: pos a ← cubie from pos b
-        // cycle = {a,b,c,d}: a←b, b←c, c←d, d←a
-        t.cp[d.c_cycle[0]] = d.c_cycle[1];
-        t.cp[d.c_cycle[1]] = d.c_cycle[2];
-        t.cp[d.c_cycle[2]] = d.c_cycle[3];
-        t.cp[d.c_cycle[3]] = d.c_cycle[0];
-
-        t.co[d.c_cycle[0]] = d.c_twist[0];
-        t.co[d.c_cycle[1]] = d.c_twist[1];
-        t.co[d.c_cycle[2]] = d.c_twist[2];
-        t.co[d.c_cycle[3]] = d.c_twist[3];
-
-        // Apply edge 4-cycle
-        t.ep[d.e_cycle[0]] = d.e_cycle[1];
-        t.ep[d.e_cycle[1]] = d.e_cycle[2];
-        t.ep[d.e_cycle[2]] = d.e_cycle[3];
-        t.ep[d.e_cycle[3]] = d.e_cycle[0];
-
-        t.eo[d.e_cycle[0]] = d.e_flip[0];
-        t.eo[d.e_cycle[1]] = d.e_flip[1];
-        t.eo[d.e_cycle[2]] = d.e_flip[2];
-        t.eo[d.e_cycle[3]] = d.e_flip[3];
-    }
-}
-
-// Compose two move tables: result = applying A then B
-static MoveTable compose(const MoveTable& A, const MoveTable& B) {
-    MoveTable R;
+// Helper: compose two move tables (apply b then a, i.e., a(b(x)))
+static MoveTable compose(const MoveTable& a, const MoveTable& b) {
+    MoveTable r;
     for (int i = 0; i < N_CORNERS; i++) {
-        // Position i in result gets cubie from B.cp[i] in intermediate,
-        // which got cubie from A.cp[B.cp[i]] in original.
-        R.cp[i] = A.cp[B.cp[i]];
-        R.co[i] = (A.co[B.cp[i]] + B.co[i]) % 3;
+        r.cp[i] = b.cp[a.cp[i]];
+        r.co[i] = (b.co[a.cp[i]] + a.co[i]) % 3;
     }
     for (int i = 0; i < N_EDGES; i++) {
-        R.ep[i] = A.ep[B.ep[i]];
-        R.eo[i] = (A.eo[B.ep[i]] + B.eo[i]) % 2;
+        r.ep[i] = b.ep[a.ep[i]];
+        r.eo[i] = (b.eo[a.ep[i]] + a.eo[i]) % 2;
     }
-    return R;
+    return r;
 }
 
-static void init_all_moves() {
-    init_base_moves();
-    for (int f = 0; f < 6; f++) {
-        all_moves[f * 3 + 0] = base_moves[f];                           // CW  (90°)
-        all_moves[f * 3 + 1] = compose(base_moves[f], base_moves[f]);   // Half (180°)
-        all_moves[f * 3 + 2] = compose(all_moves[f*3+1], base_moves[f]);// CCW (270°)
+// Apply a 4-cycle to corners: positions a->b->c->d->a with orientations
+static void corner_cycle(MoveTable& t, int a, int b, int c, int d,
+                         int oa, int ob, int oc, int od) {
+    t.cp[a] = d; t.cp[b] = a; t.cp[c] = b; t.cp[d] = c;
+    t.co[a] = od; t.co[b] = oa; t.co[c] = ob; t.co[d] = oc;
+}
+
+// Apply a 4-cycle to edges: positions a->b->c->d->a with orientations
+static void edge_cycle(MoveTable& t, int a, int b, int c, int d,
+                       int oa, int ob, int oc, int od) {
+    t.ep[a] = d; t.ep[b] = a; t.ep[c] = b; t.ep[d] = c;
+    t.eo[a] = od; t.eo[b] = oa; t.eo[c] = ob; t.eo[d] = oc;
+}
+
+void init_move_tables() {
+    // Corner positions:
+    //   0:URF 1:UFL 2:ULB 3:UBR 4:DFR 5:DLF 6:DBL 7:DRB
+    // Edge positions:
+    //   0:UR 1:UF 2:UL 3:UB 4:DR 5:DF 6:DL 7:DB 8:FR 9:FL 10:BL 11:BR
+
+    // Define the 6 CW quarter turns
+    // U face CW: corners 0->3->2->1, edges 0->3->2->1; no orientation change
+    MoveTable u = identity_table();
+    corner_cycle(u, 0,3,2,1, 0,0,0,0);
+    edge_cycle(u, 0,3,2,1, 0,0,0,0);
+
+    // D face CW: corners 4->5->6->7, edges 4->5->6->7; no orientation change
+    MoveTable d = identity_table();
+    corner_cycle(d, 4,5,6,7, 0,0,0,0);
+    edge_cycle(d, 4,5,6,7, 0,0,0,0);
+
+    // R face CW: corners 0->4->7->3, edges 0->8->4->11; corner orientations change
+    MoveTable r = identity_table();
+    corner_cycle(r, 0,4,7,3, 1,2,1,2);
+    edge_cycle(r, 0,8,4,11, 0,0,0,0);
+
+    // L face CW: corners 1->2->6->5, edges 2->10->6->9; corner orientations change
+    MoveTable l = identity_table();
+    corner_cycle(l, 1,2,6,5, 2,1,2,1);
+    edge_cycle(l, 2,10,6,9, 0,0,0,0);
+
+    // F face CW: corners 0->1->5->4, edges 1->9->5->8; both corners and edges change orientation
+    MoveTable f = identity_table();
+    corner_cycle(f, 0,1,5,4, 2,1,2,1);
+    edge_cycle(f, 1,9,5,8, 1,1,1,1);
+
+    // B face CW: corners 2->3->7->6, edges 3->11->7->10; both change orientation
+    MoveTable b = identity_table();
+    corner_cycle(b, 2,3,7,6, 1,2,1,2);
+    edge_cycle(b, 3,11,7,10, 1,1,1,1);
+
+    MoveTable cw[6] = {u, d, r, l, f, b};
+
+    // Generate all 18 moves: CW, Half, CCW for each face
+    for (int face = 0; face < 6; face++) {
+        move_tables[face * 3 + 0] = cw[face];                          // CW
+        move_tables[face * 3 + 1] = compose(cw[face], cw[face]);       // Half = CW^2
+        move_tables[face * 3 + 2] = compose(move_tables[face*3+1], cw[face]); // CCW = CW^3
     }
-    tables_initialized = true;
 }
 
-const MoveTable& get_move_table(Move m) {
-    if (!tables_initialized) init_all_moves();
-    return all_moves[m];
-}
+// ========== Ranking Functions ==========
 
-// ============================================================
-//  Apply Move to State
-// ============================================================
-void CubeState::apply_move(Move m) {
-    const MoveTable& t = get_move_table(m);
-    CubeState old = *this;
-
-    for (int i = 0; i < N_CORNERS; i++) {
-        cp[i] = old.cp[t.cp[i]];
-        co[i] = (old.co[t.cp[i]] + t.co[i]) % 3;
-    }
-    for (int i = 0; i < N_EDGES; i++) {
-        ep[i] = old.ep[t.ep[i]];
-        eo[i] = (old.eo[t.ep[i]] + t.eo[i]) % 2;
-    }
-}
-
-void CubeState::apply_moves(const std::vector<Move>& moves) {
-    for (Move m : moves) apply_move(m);
-}
-
-// ============================================================
-//  Ranking Functions
-// ============================================================
-
-// Factorial lookup
-static const uint32_t fact[] = {
-    1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600
-};
-
-// Rank a full permutation of n elements using Lehmer code
-static uint32_t perm_rank(const uint8_t* p, int n) {
+// Lehmer code ranking for full permutation of n elements
+static uint32_t perm_rank(const uint8_t* perm, int n) {
     uint32_t rank = 0;
     for (int i = 0; i < n; i++) {
         int count = 0;
         for (int j = i + 1; j < n; j++) {
-            if (p[j] < p[i]) count++;
+            if (perm[j] < perm[i]) count++;
         }
-        rank += count * fact[n - 1 - i];
+        rank = rank * (n - i) + count;
     }
     return rank;
 }
 
 // Unrank a full permutation
-static void perm_unrank(uint32_t rank, uint8_t* p, int n) {
-    std::vector<int> available(n);
-    for (int i = 0; i < n; i++) available[i] = i;
-
+static void perm_unrank(uint32_t rank, uint8_t* perm, int n) {
+    // Extract Lehmer code digits
+    int lehmer[16];
+    for (int i = n - 1; i >= 0; i--) {
+        lehmer[i] = rank % (n - i);
+        rank /= (n - i);
+    }
+    // Convert Lehmer code to permutation
+    bool used[16] = {};
     for (int i = 0; i < n; i++) {
-        uint32_t f = fact[n - 1 - i];
-        int idx = rank / f;
-        rank %= f;
-        p[i] = available[idx];
-        available.erase(available.begin() + idx);
+        int count = 0;
+        for (int j = 0; j < n; j++) {
+            if (!used[j]) {
+                if (count == lehmer[i]) {
+                    perm[i] = j;
+                    used[j] = true;
+                    break;
+                }
+                count++;
+            }
+        }
     }
 }
 
-// Corner orientation rank: first 7 values as base-3 number
-static uint32_t corner_ori_rank(const uint8_t* co) {
-    uint32_t r = 0;
-    for (int i = 0; i < 7; i++) r = r * 3 + co[i];
-    return r;
-}
-
-// Corner orientation unrank
-static void corner_ori_unrank(uint32_t rank, uint8_t* co) {
-    int sum = 0;
-    for (int i = 6; i >= 0; i--) {
-        co[i] = rank % 3;
-        sum += co[i];
-        rank /= 3;
-    }
-    co[7] = (3 - (sum % 3)) % 3; // 8th orientation determined
-}
-
-uint32_t corner_index(const CubeState& s) {
-    return perm_rank(s.cp.data(), 8) * 2187 + corner_ori_rank(s.co.data());
-}
-
-void corner_unrank(uint32_t idx, CubeState& s) {
-    corner_ori_unrank(idx % 2187, s.co.data());
-    perm_unrank(idx / 2187, s.cp.data(), 8);
-    // Leave edges as identity
-    for (int i = 0; i < N_EDGES; i++) { s.ep[i] = i; s.eo[i] = 0; }
-}
-
-// ============================================================
-//  Partial Permutation Ranking for Edge Groups
-//
-//  We track 6 specific edges (group 0: cubies 0-5, group 1: cubies 6-11).
-//  We rank their positions among the 12 edge slots.
-//
-//  Index = partial_perm_rank * 64 + ori_rank
-//  partial_perm_rank ∈ [0, P(12,6)) = [0, 665280)
-//  ori_rank ∈ [0, 64) = 6-bit orientation
-// ============================================================
-
-// Rank a partial permutation: given that k specific items are placed
-// in n slots, rank by their positions (in order of the items).
-// positions[i] = slot where item i sits, for i in 0..k-1
+// Partial permutation rank: k items from n slots
+// positions[i] = slot where item i sits (0-based)
 static uint32_t partial_perm_rank(const uint8_t* positions, int n, int k) {
-    // Use the standard ranking for k items in n positions:
-    // For each item i (in order), count how many remaining slots
-    // are below its position.
     uint32_t rank = 0;
-    bool used[12] = {};
-
+    bool used[16] = {};
     for (int i = 0; i < k; i++) {
         int pos = positions[i];
-        // Count how many slots below 'pos' are still free
+        // Count unused positions less than pos
         int count = 0;
         for (int j = 0; j < pos; j++) {
             if (!used[j]) count++;
@@ -246,14 +221,13 @@ static uint32_t partial_perm_rank(const uint8_t* positions, int n, int k) {
 
 // Unrank partial permutation
 static void partial_perm_unrank(uint32_t rank, uint8_t* positions, int n, int k) {
-    // Unrank in reverse
-    std::vector<int> digits(k);
+    // Extract digits
+    int digits[16];
     for (int i = k - 1; i >= 0; i--) {
         digits[i] = rank % (n - i);
         rank /= (n - i);
     }
-
-    bool used[12] = {};
+    bool used[16] = {};
     for (int i = 0; i < k; i++) {
         int count = 0;
         for (int j = 0; j < n; j++) {
@@ -269,98 +243,140 @@ static void partial_perm_unrank(uint32_t rank, uint8_t* positions, int n, int k)
     }
 }
 
+// --- Corner index: perm_rank(cp, 8) * 2187 + ori_rank(co) ---
+// Range: [0, 88,179,840)
+uint32_t corner_index(const CubeState& s) {
+    uint32_t prank = perm_rank(s.cp, N_CORNERS);
+    // Orientation rank: base-3 number using first 7 values (8th is determined)
+    uint32_t orank = 0;
+    for (int i = 0; i < N_CORNERS - 1; i++) {
+        orank = orank * 3 + s.co[i];
+    }
+    return prank * 2187 + orank;
+}
+
+// --- Edge index for group 0 (edges 0-5) or group 1 (edges 6-11) ---
+// Range: [0, 42,577,920)
 uint32_t edge_index(const CubeState& s, int group) {
-    // Find positions and orientations of the 6 edges in this group
-    int base = group * 6; // cubies base..base+5
+    int base = group * 6;  // 0 for group 0, 6 for group 1
 
+    // Find positions of the 6 edges in this group
     uint8_t positions[6];
-    uint8_t oris[6];
-
-    // For each cubie in the group, find which slot it's in
-    for (int c = 0; c < 6; c++) {
-        int cubie = base + c;
-        for (int slot = 0; slot < N_EDGES; slot++) {
-            if (s.ep[slot] == cubie) {
-                positions[c] = slot;
-                oris[c] = s.eo[slot];
+    for (int i = 0; i < 6; i++) {
+        // Find where edge (base+i) currently sits
+        for (int j = 0; j < N_EDGES; j++) {
+            if (s.ep[j] == base + i) {
+                positions[i] = j;
                 break;
             }
         }
     }
 
-    // Orientation rank: 6-bit number
-    uint32_t ori_rank = 0;
-    for (int i = 0; i < 6; i++) ori_rank = ori_rank * 2 + oris[i];
+    uint32_t prank = partial_perm_rank(positions, N_EDGES, 6);
 
-    return partial_perm_rank(positions, 12, 6) * 64 + ori_rank;
+    // Orientation rank: 6-bit number
+    uint32_t orank = 0;
+    for (int i = 0; i < 6; i++) {
+        orank = orank * 2 + s.eo[positions[i]];
+    }
+
+    return prank * 64 + orank;
 }
 
-void edge_unrank(uint32_t idx, int group, CubeState& s) {
-    uint32_t ori_rank = idx % 64;
-    uint32_t pp_rank  = idx / 64;
+// Unrank corner state (for PDB generation)
+CubeState corner_unrank(uint32_t idx) {
+    CubeState s;
+    s.set_solved();
 
+    uint32_t orank = idx % 2187;
+    uint32_t prank = idx / 2187;
+
+    perm_unrank(prank, s.cp, N_CORNERS);
+
+    // Decode orientation
+    int sum = 0;
+    for (int i = N_CORNERS - 2; i >= 0; i--) {
+        s.co[i] = orank % 3;
+        sum += s.co[i];
+        orank /= 3;
+    }
+    s.co[N_CORNERS - 1] = (3 - sum % 3) % 3;
+
+    return s;
+}
+
+// Unrank edge state (for PDB generation)
+CubeState edge_unrank(uint32_t idx, int group) {
+    CubeState s;
+    s.set_solved();
     int base = group * 6;
 
+    uint32_t orank = idx % 64;
+    uint32_t prank = idx / 64;
+
     uint8_t positions[6];
-    partial_perm_unrank(pp_rank, positions, 12, 6);
+    partial_perm_unrank(prank, positions, N_EDGES, 6);
 
-    uint8_t oris[6];
+    // Set edge permutation: place the 6 group edges at their ranked positions
+    // First, mark all edge positions as "don't care" (we only track our 6)
+    for (int i = 0; i < N_EDGES; i++) s.ep[i] = 255;  // sentinel
+    for (int i = 0; i < 6; i++) {
+        s.ep[positions[i]] = base + i;
+    }
+    // Fill remaining positions with other edges (in order, for consistency)
+    int fill = (group == 0) ? 6 : 0;
+    for (int i = 0; i < N_EDGES; i++) {
+        if (s.ep[i] == 255) {
+            s.ep[i] = fill++;
+            if (group == 0 && fill == 6) fill = 6;  // skip past group 0
+            if (group == 1 && fill == 6) fill = 12;  // skip past group 1 (already handled)
+        }
+    }
+
+    // Decode orientation for the 6 group edges
+    for (int i = 0; i < N_EDGES; i++) s.eo[i] = 0;
     for (int i = 5; i >= 0; i--) {
-        oris[i] = ori_rank % 2;
-        ori_rank /= 2;
+        s.eo[positions[i]] = orank % 2;
+        orank /= 2;
     }
 
-    // Build state: place the group's cubies, fill rest with dummies
-    // (for PDB generation, we only care about the group's cubies)
-    for (int i = 0; i < N_EDGES; i++) { s.ep[i] = 255; s.eo[i] = 0; }
-    for (int i = 0; i < N_CORNERS; i++) { s.cp[i] = i; s.co[i] = 0; }
-
-    for (int c = 0; c < 6; c++) {
-        s.ep[positions[c]] = base + c;
-        s.eo[positions[c]] = oris[c];
-    }
+    return s;
 }
 
-// ============================================================
-//  Parse move string
-// ============================================================
-std::vector<Move> parse_moves(const std::string& str) {
-    std::vector<Move> result;
-    std::istringstream iss(str);
-    std::string tok;
+// ========== Move Parsing ==========
 
-    while (iss >> tok) {
-        int face = -1;
-        if (tok[0] == 'U') face = 0;
-        else if (tok[0] == 'D') face = 1;
-        else if (tok[0] == 'R') face = 2;
-        else if (tok[0] == 'L') face = 3;
-        else if (tok[0] == 'F') face = 4;
-        else if (tok[0] == 'B') face = 5;
+static const char* move_names[] = {
+    "U", "U2", "U'", "D", "D2", "D'",
+    "R", "R2", "R'", "L", "L2", "L'",
+    "F", "F2", "F'", "B", "B2", "B'"
+};
 
-        if (face < 0) continue;
+Move parse_move(const std::string& s) {
+    for (int i = 0; i < N_MOVES; i++) {
+        if (s == move_names[i]) return static_cast<Move>(i);
+    }
+    throw std::runtime_error("Invalid move: " + s);
+}
 
-        int variant = 0; // CW by default
-        if (tok.size() > 1) {
-            if (tok[1] == '2') variant = 1;      // half turn
-            else if (tok[1] == '\'') variant = 2; // CCW
-        }
-        result.push_back(static_cast<Move>(face * 3 + variant));
+std::string move_to_string(Move m) {
+    return move_names[static_cast<int>(m)];
+}
+
+std::vector<Move> parse_scramble(const std::string& s) {
+    std::vector<Move> moves;
+    std::istringstream iss(s);
+    std::string token;
+    while (iss >> token) {
+        moves.push_back(parse_move(token));
+    }
+    return moves;
+}
+
+std::string solution_to_string(const std::vector<Move>& moves) {
+    std::string result;
+    for (size_t i = 0; i < moves.size(); i++) {
+        if (i > 0) result += " ";
+        result += move_to_string(moves[i]);
     }
     return result;
-}
-
-// ============================================================
-//  Debug Print
-// ============================================================
-void print_state(const CubeState& s) {
-    std::cout << "CP: ";
-    for (int i = 0; i < N_CORNERS; i++) std::cout << (int)s.cp[i] << " ";
-    std::cout << "\nCO: ";
-    for (int i = 0; i < N_CORNERS; i++) std::cout << (int)s.co[i] << " ";
-    std::cout << "\nEP: ";
-    for (int i = 0; i < N_EDGES; i++) std::cout << (int)s.ep[i] << " ";
-    std::cout << "\nEO: ";
-    for (int i = 0; i < N_EDGES; i++) std::cout << (int)s.eo[i] << " ";
-    std::cout << "\n";
 }

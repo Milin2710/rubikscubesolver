@@ -130,7 +130,7 @@ Same structure as Group 0 but tracking the other 6 edges.
 - **Total states:** **42,577,920** (same size)
 - **Storage:** ~21 MB
 
-**Total memory:** ~86 MB (nibble-packed) or ~170 MB (byte-packed)
+**Total memory:** ~86.7 MB (nibble-packed) or ~170 MB (byte-packed)
 
 ### Combined Heuristic
 
@@ -312,7 +312,7 @@ This halves the storage requirement:
 | Corners | 88,179,840 | 88 MB | 44 MB |
 | Edge Group 0 | 42,577,920 | 42 MB | 21 MB |
 | Edge Group 1 | 42,577,920 | 42 MB | 21 MB |
-| **Total** | **173 million** | **172 MB** | **86 MB** |
+| **Total** | **173 million** | **172 MB** | **86.7 MB** |
 
 ---
 
@@ -377,7 +377,7 @@ This is **admissible** (never overestimates) because each quarter/half turn affe
 | Maximum solution depth (God's Number) | 20 (half-turn metric) |
 | PDB generation time | ~5–10 minutes (one-time) |
 | Typical solve time (with PDBs) | Seconds to minutes |
-| Memory for PDBs | ~86 MB (nibble-packed) |
+| Memory for PDBs | ~86.7 MB (nibble-packed) |
 | Search memory | O(d) where d = solution depth |
 
 ---
